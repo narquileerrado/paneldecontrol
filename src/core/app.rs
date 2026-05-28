@@ -304,7 +304,7 @@ impl App {
 
     fn render_help(&self, full_area: Rect, buf: &mut ratatui::buffer::Buffer) {
         let popup_w = 58u16.min(full_area.width.saturating_sub(4));
-        let popup_h = 24u16.min(full_area.height.saturating_sub(4));
+        let popup_h = 30u16.min(full_area.height.saturating_sub(4));
         let popup = centered_rect(popup_w, popup_h, full_area);
 
         ratatui::widgets::Widget::render(Clear, popup, buf);
@@ -375,6 +375,23 @@ impl App {
             Line::from(vec![
                 Span::styled("  Esc / Backspace  ", Style::default().fg(AMBER)),
                 Span::styled("Volver / detener TTS", Style::default().fg(AMBER_DIM)),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "  WIDGET: MÚSICA (PLAYER)",
+                Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![
+                Span::styled("  Space            ", Style::default().fg(AMBER)),
+                Span::styled("Play / Pausa", Style::default().fg(AMBER_DIM)),
+            ]),
+            Line::from(vec![
+                Span::styled("  \u{2190}                ", Style::default().fg(AMBER)),
+                Span::styled("Canción anterior", Style::default().fg(AMBER_DIM)),
+            ]),
+            Line::from(vec![
+                Span::styled("  \u{2192}                ", Style::default().fg(AMBER)),
+                Span::styled("Canción siguiente", Style::default().fg(AMBER_DIM)),
             ]),
             Line::from(""),
             Line::from(vec![Span::styled(
