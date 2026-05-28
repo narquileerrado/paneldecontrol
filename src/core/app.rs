@@ -64,6 +64,7 @@ impl App {
         let size = terminal.size()?;
         self.last_area = Rect::new(0, 0, size.width, size.height);
         self.layout.recalculate(Self::content_area(self.last_area));
+        self.layout.focus_widget_id("noticias");
 
         for (id, widget) in &mut self.widgets {
             widget.start_background(WorkerContext {

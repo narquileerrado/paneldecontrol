@@ -149,9 +149,9 @@ impl Widget for WeatherWidget {
             self.lines.join("\n")
         };
         let style = if self.lines.is_empty() {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Rgb(0x80, 0x58, 0x00))
         } else {
-            Style::default()
+            Style::default().fg(Color::Rgb(0xff, 0xb0, 0x00))
         };
         ratatui::widgets::Widget::render(
             Paragraph::new(text).style(style).wrap(Wrap { trim: true }),

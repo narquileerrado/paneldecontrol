@@ -162,9 +162,12 @@ impl RssWidget {
     }
 
     fn render_list(&self, area: Rect, buf: &mut Buffer) {
+        const AMBER: Color = Color::Rgb(0xff, 0xb0, 0x00);
+        const AMBER_DIM: Color = Color::Rgb(0x80, 0x58, 0x00);
+
         if self.entries.is_empty() {
             ratatui::widgets::Widget::render(
-                Paragraph::new("Cargando...").style(Style::default().fg(Color::DarkGray)),
+                Paragraph::new("Cargando...").style(Style::default().fg(AMBER_DIM)),
                 area,
                 buf,
             );
@@ -176,9 +179,9 @@ impl RssWidget {
 
         for (i, entry) in self.entries.iter().enumerate().skip(scroll).take(height) {
             let style = if i == self.selected {
-                Style::default().add_modifier(Modifier::REVERSED)
+                Style::default().fg(AMBER).add_modifier(Modifier::REVERSED)
             } else {
-                Style::default()
+                Style::default().fg(AMBER_DIM)
             };
             let line = format!("{}. {}", i + 1, entry.title);
             ratatui::widgets::Widget::render(
@@ -190,11 +193,13 @@ impl RssWidget {
     }
 
     fn render_detail(&self, area: Rect, buf: &mut Buffer) {
+        const AMBER: Color = Color::Rgb(0xff, 0xb0, 0x00);
+
         let entry = &self.entries[self.selected];
 
         ratatui::widgets::Widget::render(
             Paragraph::new(entry.title.as_str())
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+                .style(Style::default().fg(AMBER).add_modifier(Modifier::BOLD)),
             Rect::new(area.x, area.y, area.width, 1),
             buf,
         );
@@ -207,6 +212,7 @@ impl RssWidget {
             };
             ratatui::widgets::Widget::render(
                 Paragraph::new(body)
+                    .style(Style::default().fg(AMBER))
                     .wrap(Wrap { trim: false })
                     .scroll((self.scroll, 0)),
                 Rect::new(area.x, area.y + 2, area.width, area.height - 2),

@@ -128,10 +128,13 @@ impl Widget for BtcWidget {
         let (text, style) = if self.lines.is_empty() {
             (
                 "Cargando...".to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Rgb(0x80, 0x58, 0x00)),
             )
         } else {
-            (self.lines.join("\n"), Style::default())
+            (
+                self.lines.join("\n"),
+                Style::default().fg(Color::Rgb(0xff, 0xb0, 0x00)),
+            )
         };
         ratatui::widgets::Widget::render(
             Paragraph::new(text).style(style).wrap(Wrap { trim: false }),

@@ -138,6 +138,12 @@ impl LayoutManager {
         self.focused
     }
 
+    pub fn focus_widget_id(&mut self, id: &str) {
+        if let Some(idx) = self.slots.iter().position(|s| s.widget_id == id) {
+            self.focused = idx;
+        }
+    }
+
     pub fn export_config(&self) -> &LayoutConfig {
         &self.config
     }
