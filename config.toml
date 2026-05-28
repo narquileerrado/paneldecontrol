@@ -1,11 +1,11 @@
 [[layout.rows]]
-height = 15
+height = 12
 slots = [
     { width = 100, widget = "sistema" },
 ]
 
 [[layout.rows]]
-height = 70
+height = 61
 slots = [
     { width = 70, widget = "noticias" },
     { width = 30, widget = "clima" },
@@ -16,6 +16,12 @@ height = 15
 slots = [
     { width = 50, widget = "dolar" },
     { width = 50, widget = "btc" },
+]
+
+[[layout.rows]]
+height = 12
+slots = [
+    { width = 100, widget = "musica" },
 ]
 
 [widgets.sistema]
@@ -41,6 +47,11 @@ ttl_secs = 300
 [widgets.btc]
 kind     = "btc"
 ttl_secs = 60
+
+[widgets.musica]
+kind     = "player"
+ttl_secs = 3
+# player = "spotify"   # descomentar para fijar un player específico
 
 [theme]
 accent       = "#ffb000"

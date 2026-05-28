@@ -3,6 +3,7 @@
 pub mod btc;
 pub mod clock;
 pub mod dolar;
+pub mod player;
 pub mod rss;
 pub mod sistema;
 pub mod static_text;
@@ -123,6 +124,7 @@ impl WidgetRegistry {
         });
         r.register("dolar", |c, x| Box::pin(dolar::DolarWidget::init(c, x)));
         r.register("btc", |c, x| Box::pin(btc::BtcWidget::init(c, x)));
+        r.register("player", |c, x| Box::pin(player::PlayerWidget::init(c, x)));
         r
     }
 
