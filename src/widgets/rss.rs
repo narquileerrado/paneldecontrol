@@ -438,9 +438,11 @@ fn parse_feed(xml: &[u8], max_items: usize) -> Result<Vec<(String, String)>> {
 }
 
 fn strip_html(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
+    // Decodificar entidades primero para que etiquetas como &lt;b&gt; también se limpien.
+    let decoded = decode_html_entities(s);
+    let mut out = String::with_capacity(decoded.len());
     let mut in_tag = false;
-    for ch in s.chars() {
+    for ch in decoded.chars() {
         match ch {
             '<' => in_tag = true,
             '>' => in_tag = false,
@@ -449,6 +451,105 @@ fn strip_html(s: &str) -> String {
         }
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// Decodifica entidades HTML: numéricas (&#233; &#xE9;) y nombres comunes.
+fn decode_html_entities(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        result.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        // Buscar el ';' que cierra la entidad (máx 32 chars para el nombre)
+        if let Some(semi) = rest[1..].find(';').filter(|&p| p <= 30).map(|p| p + 1) {
+            let entity = &rest[..semi + 1];
+            if let Some(ch) = decode_entity(entity) {
+                result.push(ch);
+                rest = &rest[semi + 1..];
+                continue;
+            }
+        }
+        // No es una entidad reconocida: emitir el '&' literal y seguir.
+        result.push('&');
+        rest = &rest[1..];
+    }
+    result.push_str(rest);
+    result
+}
+
+fn decode_entity(e: &str) -> Option<char> {
+    // Entidades numéricas hex: &#xNN; o &#XNN;
+    if e.len() > 4 && e.starts_with("&#") && (e.as_bytes()[2] == b'x' || e.as_bytes()[2] == b'X') {
+        let hex = &e[3..e.len() - 1];
+        return u32::from_str_radix(hex, 16).ok().and_then(char::from_u32);
+    }
+    // Entidades numéricas decimales: &#NNN;
+    if e.len() > 3 && e.starts_with("&#") {
+        let dec = &e[2..e.len() - 1];
+        return dec.parse::<u32>().ok().and_then(char::from_u32);
+    }
+    // Entidades nominales
+    match e {
+        "&amp;" => Some('&'),
+        "&lt;" => Some('<'),
+        "&gt;" => Some('>'),
+        "&quot;" => Some('"'),
+        "&apos;" => Some('\''),
+        "&nbsp;" => Some('\u{00A0}'),
+        // Vocales con acento (minúsculas)
+        "&aacute;" => Some('á'),
+        "&eacute;" => Some('é'),
+        "&iacute;" => Some('í'),
+        "&oacute;" => Some('ó'),
+        "&uacute;" => Some('ú'),
+        // Vocales con acento (mayúsculas)
+        "&Aacute;" => Some('Á'),
+        "&Eacute;" => Some('É'),
+        "&Iacute;" => Some('Í'),
+        "&Oacute;" => Some('Ó'),
+        "&Uacute;" => Some('Ú'),
+        // Eñe
+        "&ntilde;" => Some('ñ'),
+        "&Ntilde;" => Some('Ñ'),
+        // Diéresis
+        "&uuml;" => Some('ü'),
+        "&Uuml;" => Some('Ü'),
+        // Vocales con grave
+        "&agrave;" => Some('à'),
+        "&egrave;" => Some('è'),
+        "&igrave;" => Some('ì'),
+        "&ograve;" => Some('ò'),
+        "&ugrave;" => Some('ù'),
+        // Cedilla
+        "&ccedil;" => Some('ç'),
+        "&Ccedil;" => Some('Ç'),
+        // Signos de puntuación españoles
+        "&iexcl;" => Some('¡'),
+        "&iquest;" => Some('¿'),
+        "&laquo;" => Some('«'),
+        "&raquo;" => Some('»'),
+        // Tipografía
+        "&mdash;" => Some('—'),
+        "&ndash;" => Some('–'),
+        "&ldquo;" => Some('"'),
+        "&rdquo;" => Some('"'),
+        "&lsquo;" => Some('\u{2018}'),
+        "&rsquo;" => Some('\u{2019}'),
+        "&hellip;" => Some('…'),
+        "&bull;" => Some('•'),
+        "&middot;" => Some('·'),
+        // Símbolos
+        "&copy;" => Some('©'),
+        "&reg;" => Some('®'),
+        "&trade;" => Some('™'),
+        "&euro;" => Some('€'),
+        "&pound;" => Some('£'),
+        "&deg;" => Some('°'),
+        "&plusmn;" => Some('±'),
+        "&times;" => Some('×'),
+        "&divide;" => Some('÷'),
+        _ => None,
+    }
 }
 
 // Convierte entidades HTML básicas a texto plano para que el TTS las lea bien.
@@ -533,6 +634,39 @@ mod tests {
         assert_eq!(strip_html("<b>Hola</b> <i>mundo</i>"), "Hola mundo");
         assert_eq!(strip_html("sin tags"), "sin tags");
         assert_eq!(strip_html(""), "");
+    }
+
+    #[test]
+    fn decode_entidades_named() {
+        assert_eq!(
+            decode_html_entities("El caf&eacute; est&aacute; listo"),
+            "El café está listo"
+        );
+        assert_eq!(decode_html_entities("&ntilde;o&ntilde;o"), "ñoño");
+        assert_eq!(decode_html_entities("&iquest;Cu&aacute;ndo?"), "¿Cuándo?");
+    }
+
+    #[test]
+    fn decode_entidades_numericas() {
+        assert_eq!(decode_html_entities("caf&#233;"), "café"); // decimal
+        assert_eq!(decode_html_entities("&#xF1;o"), "ño"); // hex
+        assert_eq!(decode_html_entities("&#X41;"), "A"); // hex mayúscula
+    }
+
+    #[test]
+    fn strip_html_decodifica_entidades() {
+        assert_eq!(
+            strip_html("El caf&eacute; &amp; <b>el t&eacute;</b>"),
+            "El café & el té"
+        );
+        // Etiquetas codificadas como entidades también se eliminan
+        assert_eq!(strip_html("&lt;b&gt;texto&lt;/b&gt;"), "texto");
+    }
+
+    #[test]
+    fn entidad_desconocida_se_preserva() {
+        assert_eq!(decode_html_entities("&nada;"), "&nada;");
+        assert_eq!(decode_html_entities("R&amp;B"), "R&B");
     }
 
     #[test]
