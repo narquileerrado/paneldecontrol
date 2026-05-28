@@ -1,21 +1,25 @@
 use crate::core::event::InputEvent;
 use crate::widgets::{
-    CoreMsg, DataState, Widget, WidgetAction, WidgetConfig, WidgetContext, WidgetId, WidgetMsg,
-    WorkerContext,
+    CoreMsg, DataState, SistemaMetrics, Widget, WidgetAction, WidgetConfig, WidgetContext,
+    WidgetId, WidgetMsg, WorkerContext,
 };
 use anyhow::Result;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
+    text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
 };
 use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
 
+const DIM_AMBER: Color = Color::Rgb(0x80, 0x58, 0x00);
+const BAR_W: usize = 20;
+
 pub struct SistemaWidget {
     id: WidgetId,
-    lines: Vec<String>,
+    metrics: Option<SistemaMetrics>,
     last_fetch: Option<Instant>,
     worker: Option<AbortHandle>,
 }
@@ -24,7 +28,7 @@ impl SistemaWidget {
     pub async fn init(config: WidgetConfig, _ctx: WidgetContext) -> Result<Box<dyn Widget>> {
         Ok(Box::new(Self {
             id: config.id,
-            lines: Vec::new(),
+            metrics: None,
             last_fetch: None,
             worker: None,
         }))
@@ -59,7 +63,6 @@ impl Widget for SistemaWidget {
                     .with_memory(MemoryRefreshKind::everything()),
             );
 
-            // Primera lectura de CPU — necesaria para calcular el delta en la siguiente.
             sys.refresh_cpu_usage();
             tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -68,11 +71,33 @@ impl Widget for SistemaWidget {
                 sys.refresh_memory();
                 let disks = Disks::new_with_refreshed_list();
 
-                let lines = build_lines(&sys, &disks);
+                let mut disk_data: Vec<(String, u64, u64)> = Vec::new();
+                for disk in &disks {
+                    let mount = disk.mount_point().to_string_lossy().to_string();
+                    if skip_mount(&mount) {
+                        continue;
+                    }
+                    let total = disk.total_space();
+                    if total < 1 << 30 {
+                        continue;
+                    }
+                    let used = total.saturating_sub(disk.available_space());
+                    disk_data.push((fmt_mount(&mount, 8), used, total));
+                }
+
+                let metrics = SistemaMetrics {
+                    cpu_pct: sys.global_cpu_info().cpu_usage(),
+                    mem_used: sys.used_memory(),
+                    mem_total: sys.total_memory(),
+                    swap_used: sys.used_swap(),
+                    swap_total: sys.total_swap(),
+                    disks: disk_data,
+                };
+
                 let _ = tx
                     .send(CoreMsg {
                         widget_id: widget_id.clone(),
-                        msg: WidgetMsg::Lines(lines),
+                        msg: WidgetMsg::Sistema(metrics),
                     })
                     .await;
 
@@ -89,23 +114,62 @@ impl Widget for SistemaWidget {
     }
 
     fn update(&mut self, msg: WidgetMsg) {
-        if let WidgetMsg::Lines(lines) = msg {
-            self.lines = lines;
+        if let WidgetMsg::Sistema(m) = msg {
+            self.metrics = Some(m);
             self.last_fetch = Some(Instant::now());
         }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (text, style) = if self.lines.is_empty() {
-            (
-                "Leyendo...".to_string(),
-                Style::default().fg(Color::DarkGray),
-            )
-        } else {
-            (self.lines.join("\n"), Style::default())
+        let Some(ref m) = self.metrics else {
+            ratatui::widgets::Widget::render(
+                Paragraph::new("Leyendo...").style(Style::default().fg(DIM_AMBER)),
+                area,
+                buf,
+            );
+            return;
         };
+
+        let now = chrono::Local::now();
+        let ts = format!("{}  //  {}", now.format("%H:%M:%S"), now.format("%d:%m:%y"));
+
+        let mut lines: Vec<Line<'static>> = vec![
+            Line::from(vec![Span::styled(ts, Style::default().fg(DIM_AMBER))]),
+            Line::from(""),
+        ];
+
+        lines.push(bar_line("CPU ", m.cpu_pct, BAR_W, ""));
+
+        let mem_pct = pct(m.mem_used, m.mem_total);
+        lines.push(bar_line(
+            "MEM ",
+            mem_pct,
+            BAR_W,
+            &format!("{}/{}", fmt_b(m.mem_used), fmt_b(m.mem_total)),
+        ));
+
+        if m.swap_total > 0 {
+            let swp_pct = pct(m.swap_used, m.swap_total);
+            lines.push(bar_line(
+                "SWP ",
+                swp_pct,
+                BAR_W,
+                &format!("{}/{}", fmt_b(m.swap_used), fmt_b(m.swap_total)),
+            ));
+        }
+
+        for (label, used, total) in &m.disks {
+            let disk_pct = pct(*used, *total);
+            lines.push(bar_line(
+                &format!("{:<8}", label),
+                disk_pct,
+                BAR_W,
+                &format!("{}/{}", fmt_b(*used), fmt_b(*total)),
+            ));
+        }
+
         ratatui::widgets::Widget::render(
-            Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
             area,
             buf,
         );
@@ -122,57 +186,31 @@ impl Widget for SistemaWidget {
 
 // ──────────────────────────────────────────────────────────────
 
-fn build_lines(sys: &sysinfo::System, disks: &sysinfo::Disks) -> Vec<String> {
-    const BAR: usize = 20;
-    let mut lines = Vec::new();
-
-    let cpu_pct = sys.global_cpu_info().cpu_usage();
-    lines.push(format!("CPU  {} {:5.1}%", bar(cpu_pct, BAR), cpu_pct));
-
-    let mem_used = sys.used_memory();
-    let mem_total = sys.total_memory();
-    let mem_pct = pct(mem_used, mem_total);
-    lines.push(format!(
-        "MEM  {} {}/{}",
-        bar(mem_pct, BAR),
-        fmt_b(mem_used),
-        fmt_b(mem_total),
-    ));
-
-    let swp_used = sys.used_swap();
-    let swp_total = sys.total_swap();
-    if swp_total > 0 {
-        let swp_pct = pct(swp_used, swp_total);
-        lines.push(format!(
-            "SWP  {} {}/{}",
-            bar(swp_pct, BAR),
-            fmt_b(swp_used),
-            fmt_b(swp_total),
-        ));
+fn pct_color(pct: f32) -> Color {
+    if pct < 60.0 {
+        Color::Rgb(0x4a, 0xf6, 0x26) // verde
+    } else if pct < 80.0 {
+        Color::Rgb(0xff, 0xb0, 0x00) // amber
+    } else {
+        Color::Rgb(0xff, 0x55, 0x55) // rojo
     }
+}
 
-    for disk in disks {
-        let mount = disk.mount_point().to_string_lossy();
-        if skip_mount(&mount) {
-            continue;
-        }
-        let total = disk.total_space();
-        let avail = disk.available_space();
-        if total < 1 << 30 {
-            continue;
-        } // ignorar < 1 GiB
-        let used = total.saturating_sub(avail);
-        let label = fmt_mount(&mount, 8);
-        lines.push(format!(
-            "{} {} {}/{}",
-            label,
-            bar(pct(used, total), BAR),
-            fmt_b(used),
-            fmt_b(total),
-        ));
-    }
+fn bar_line(label: &str, pct: f32, width: usize, suffix: &str) -> Line<'static> {
+    let filled = ((pct / 100.0) * width as f32).round() as usize;
+    let filled = filled.min(width);
+    let empty = width - filled;
+    let color = pct_color(pct);
 
-    lines
+    Line::from(vec![
+        Span::raw(label.to_string()),
+        Span::raw("["),
+        Span::styled("█".repeat(filled), Style::default().fg(color)),
+        Span::styled("░".repeat(empty), Style::default().fg(DIM_AMBER)),
+        Span::raw("]"),
+        Span::styled(format!(" {:5.1}%", pct), Style::default().fg(color)),
+        Span::styled(format!("  {}", suffix), Style::default().fg(DIM_AMBER)),
+    ])
 }
 
 fn pct(used: u64, total: u64) -> f32 {
@@ -181,12 +219,6 @@ fn pct(used: u64, total: u64) -> f32 {
     } else {
         used as f32 / total as f32 * 100.0
     }
-}
-
-fn bar(pct: f32, width: usize) -> String {
-    let filled = ((pct / 100.0) * width as f32).round() as usize;
-    let filled = filled.min(width);
-    format!("[{}{}]", "█".repeat(filled), "░".repeat(width - filled))
 }
 
 fn fmt_b(bytes: u64) -> String {
@@ -219,21 +251,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bar_vacio() {
-        let b = bar(0.0, 10);
-        assert_eq!(b, "[░░░░░░░░░░]");
+    fn pct_zero_total() {
+        assert_eq!(pct(0, 0), 0.0);
     }
 
     #[test]
-    fn bar_lleno() {
-        let b = bar(100.0, 10);
-        assert_eq!(b, "[██████████]");
+    fn pct_mitad() {
+        assert!((pct(50, 100) - 50.0).abs() < 0.01);
     }
 
     #[test]
-    fn bar_mitad() {
-        let b = bar(50.0, 10);
-        assert_eq!(b, "[█████░░░░░]");
+    fn pct_color_verde() {
+        assert_eq!(pct_color(30.0), Color::Rgb(0x4a, 0xf6, 0x26));
+    }
+
+    #[test]
+    fn pct_color_amber() {
+        assert_eq!(pct_color(70.0), Color::Rgb(0xff, 0xb0, 0x00));
+    }
+
+    #[test]
+    fn pct_color_rojo() {
+        assert_eq!(pct_color(90.0), Color::Rgb(0xff, 0x55, 0x55));
     }
 
     #[test]

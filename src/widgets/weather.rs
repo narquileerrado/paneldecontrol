@@ -138,7 +138,7 @@ impl Widget for WeatherWidget {
                     self.lines = vec![format!("Error: {}", e)];
                 }
             }
-            WidgetMsg::Entries(_) => {}
+            WidgetMsg::Entries(_) | WidgetMsg::Sistema(_) => {}
         }
     }
 

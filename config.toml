@@ -1,8 +1,7 @@
 [[layout.rows]]
 height = 15
 slots = [
-    { width = 20, widget = "reloj" },
-    { width = 80, widget = "sistema" },
+    { width = 100, widget = "sistema" },
 ]
 
 [[layout.rows]]
@@ -18,9 +17,6 @@ slots = [
     { width = 50, widget = "dolar" },
     { width = 50, widget = "btc" },
 ]
-
-[widgets.reloj]
-kind = "clock"
 
 [widgets.sistema]
 kind = "sistema"
@@ -47,15 +43,14 @@ kind     = "btc"
 ttl_secs = 60
 
 [theme]
-accent      = "#bd93f9"
-focused     = "#ff79c6"
-inactive    = "#44475a"
-border_type = "rounded"
+accent       = "#ffb000"
+accent_focus = "#4af626"
+inactive     = "#3a2000"
+border_type  = "plain"
 
 [theme.widget_accents]
-reloj    = "#8be9fd"
-sistema  = "#6272a4"
-clima    = "#50fa7b"
-noticias = "#ffb86c"
-dolar    = "#f1fa8c"
-btc      = "#ff9580"
+sistema  = "#ffb000"
+clima    = "#cc8800"
+noticias = "#ffaa00"
+dolar    = "#ffcc00"
+btc      = "#ff9a00"

@@ -309,7 +309,7 @@ impl Widget for RssWidget {
                     }];
                 }
             }
-            WidgetMsg::Lines(_) => {}
+            WidgetMsg::Lines(_) | WidgetMsg::Sistema(_) => {}
         }
     }
 

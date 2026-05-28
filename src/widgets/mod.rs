@@ -34,11 +34,22 @@ pub struct WidgetConfig {
     pub params: HashMap<String, toml::Value>,
 }
 
+// Datos en bruto del widget sistema (CPU, RAM, discos).
+pub struct SistemaMetrics {
+    pub cpu_pct: f32,
+    pub mem_used: u64,
+    pub mem_total: u64,
+    pub swap_used: u64,
+    pub swap_total: u64,
+    pub disks: Vec<(String, u64, u64)>, // (label, used, total)
+}
+
 // Mensaje que el worker envía al widget vía canal.
 pub enum WidgetMsg {
     Lines(Vec<String>),
     Entries(Vec<(String, String)>), // (título, resumen/cuerpo)
     Error(String),
+    Sistema(SistemaMetrics),
 }
 
 // Mensaje genérico que el worker envía al core.

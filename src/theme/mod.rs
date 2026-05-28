@@ -6,9 +6,11 @@ use std::collections::HashMap;
 #[derive(Deserialize, Default)]
 pub struct ThemeConfig {
     pub accent: Option<String>,
+    #[serde(rename = "accent_focus")]
     pub accent_focus: Option<String>,
     pub inactive: Option<String>,
-    pub border_style: Option<String>,
+    #[serde(rename = "border_type")]
+    pub border_type: Option<String>,
     pub widget_accents: Option<HashMap<String, String>>,
 }
 
@@ -26,22 +28,22 @@ impl Theme {
             .accent
             .as_deref()
             .and_then(parse_hex)
-            .unwrap_or(Color::Rgb(0xbd, 0x93, 0xf9));
+            .unwrap_or(Color::Rgb(0xff, 0xb0, 0x00)); // amber
         let accent_focused = cfg
             .accent_focus
             .as_deref()
             .and_then(parse_hex)
-            .unwrap_or(Color::Rgb(0xff, 0x79, 0xc6));
+            .unwrap_or(Color::Rgb(0x4a, 0xf6, 0x26)); // fósforo verde
         let inactive = cfg
             .inactive
             .as_deref()
             .and_then(parse_hex)
-            .unwrap_or(Color::Rgb(0x44, 0x47, 0x5a));
+            .unwrap_or(Color::Rgb(0x3a, 0x20, 0x00)); // amber muy oscuro
         let border_style = cfg
-            .border_style
+            .border_type
             .as_deref()
             .and_then(parse_border_type)
-            .unwrap_or(BorderType::Rounded);
+            .unwrap_or(BorderType::Plain);
         let widget_accents = cfg
             .widget_accents
             .as_ref()
@@ -60,7 +62,6 @@ impl Theme {
         }
     }
 
-    // Devuelve el accent del widget si está configurado, o el accent global.
     pub fn accent_for(&self, widget_id: &str) -> Color {
         self.widget_accents
             .get(widget_id)
@@ -102,8 +103,8 @@ mod tests {
 
     #[test]
     fn parse_hex_valid() {
-        assert_eq!(parse_hex("#bd93f9"), Some(Color::Rgb(0xbd, 0x93, 0xf9)));
-        assert_eq!(parse_hex("50fa7b"), Some(Color::Rgb(0x50, 0xfa, 0x7b)));
+        assert_eq!(parse_hex("#ffb000"), Some(Color::Rgb(0xff, 0xb0, 0x00)));
+        assert_eq!(parse_hex("4af626"), Some(Color::Rgb(0x4a, 0xf6, 0x26)));
     }
 
     #[test]
@@ -113,9 +114,16 @@ mod tests {
     }
 
     #[test]
+    fn defaults_son_crt_amber() {
+        let theme = Theme::default();
+        assert_eq!(theme.accent, Color::Rgb(0xff, 0xb0, 0x00));
+        assert_eq!(theme.accent_focused, Color::Rgb(0x4a, 0xf6, 0x26));
+        assert_eq!(theme.border_style, BorderType::Plain);
+    }
+
+    #[test]
     fn theme_widget_accent_fallback() {
         let theme = Theme::default();
-        // Sin widget_accents configurados, devuelve el accent global.
         assert_eq!(theme.accent_for("cualquier-widget"), theme.accent);
     }
 }

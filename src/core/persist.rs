@@ -59,8 +59,11 @@ impl LayoutSnapshot {
     pub fn apply_to(&self, layout: &mut LayoutConfig) {
         for (snap_row, cfg_row) in self.rows.iter().zip(layout.rows.iter_mut()) {
             cfg_row.height = snap_row.height;
-            for (w, slot) in snap_row.widths.iter().zip(cfg_row.slots.iter_mut()) {
-                slot.width = *w;
+            // Solo aplicar anchos si el número de slots coincide exactamente.
+            if snap_row.widths.len() == cfg_row.slots.len() {
+                for (w, slot) in snap_row.widths.iter().zip(cfg_row.slots.iter_mut()) {
+                    slot.width = *w;
+                }
             }
         }
     }
