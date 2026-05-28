@@ -90,12 +90,9 @@ impl RssWidget {
         self.stop_tts();
 
         let text = clean_for_tts(text);
-        let text = truncate_chars(&text, 1200);
 
         if !self.tts_cmd.is_empty() {
-            // Comando configurado por el usuario (ej: piper + aplay).
-            // El texto se envía por stdin para no tener límites de longitud de arg
-            // y para ser compatible con herramientas que no aceptan texto como arg.
+            // El texto se envía por stdin: sin límite de longitud de argumento.
             match std::process::Command::new("sh")
                 .args(["-c", &self.tts_cmd])
                 .stdin(Stdio::piped())
@@ -106,7 +103,6 @@ impl RssWidget {
                 Ok(mut child) => {
                     if let Some(mut stdin) = child.stdin.take() {
                         let _ = writeln!(stdin, "{}", text);
-                        // stdin se descarta aquí → EOF → el proceso TTS termina solo
                     }
                     self.tts_child = Some(child);
                     return;
@@ -115,7 +111,8 @@ impl RssWidget {
             }
         }
 
-        // Fallback: auto-detección de TTS del sistema (texto como argumento)
+        // Fallback: TTS del sistema vía argumento de shell (límite ~128 KB → truncar a 4096).
+        let text = truncate_chars(&text, 4096);
         let lang = &self.tts_lang;
         if let Ok(child) = std::process::Command::new("spd-say")
             .args(["-l", lang, &text])
@@ -372,7 +369,6 @@ impl Widget for RssWidget {
                 }
                 let entry = &self.entries[self.selected];
                 let text = if self.detail_view {
-                    // Título + resumen completo (hasta 800 chars — se trunca en speak())
                     if entry.summary.is_empty() {
                         entry.title.clone()
                     } else {
