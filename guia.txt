@@ -1,0 +1,374 @@
+Plan de proyecto (Rust, TUI, widgets estandarizados)
+
+Objetivo
+
+Panel TUI responsivo, modular y temable en Rust que muestre widgets (clima, cotizaciones,
+RSS/noticias, reloj, etc.) con una API de widgets claramente definida para facilitar
+agregar y modificar componentes. Inspiración visual: btop (bordes redondeados, gráficos
+de alta densidad, temas por componente, soporte de mouse).
+
+─────────────────────────────────────────────────────────────────────────
+Arquitectura general
+─────────────────────────────────────────────────────────────────────────
+
+Core
+  - Event loop (tokio runtime + poll de terminal)
+  - Renderer (ratatui + crossterm) con redibujado parcial por regiones
+  - Layout manager responsivo (grid/flex) con tamaños mínimos por widget
+  - Gestor de focus con indicador visual (cambio de color de borde)
+  - Widget registry (factory por kind: String)
+  - Scheduler / workers (tareas async por widget con AbortHandle)
+  - Config loader (TOML via serde) y persistencia de layout
+  - Cache por widget (TTL configurable) y backoff exponencial en requests
+  - Sistema de temas (paleta global + accent por widget)
+  - Logging (tracing + tracing-subscriber) y manejo de errores
+  - Panic hook que restaura el terminal antes de crashear
+
+─────────────────────────────────────────────────────────────────────────
+Contratos y convenciones (clave)
+─────────────────────────────────────────────────────────────────────────
+
+  - Cada widget implementa el trait Widget con ciclo de vida completo:
+    init (constructor estático, no forma parte del vtable), update,
+    render, handle_input, serialize_state.
+  - Los widgets son independientes (no bloquean la UI) y se comunican
+    con el core vía canales (mpsc / watch según el caso).
+  - El registro de widgets usa WidgetFactory (fn pointer / closure) para
+    desacoplar construcción de uso polimórfico.
+  - La config global define widgets activos, posición/tamaño preferido,
+    keys API y parámetros específicos por instancia.
+  - Temas con paleta global y accents por widget; colores limitados a
+    la paleta configurable.
+  - El InputEvent incluye teclado, mouse y resize desde el día 1.
+
+─────────────────────────────────────────────────────────────────────────
+Hitos (6 sprints)
+─────────────────────────────────────────────────────────────────────────
+
+Sprint 1 — Scaffold, loop TUI y resiliencia básica
+  - Proyecto Cargo, crates principales.
+  - Loop de eventos con crossterm (teclas + mouse + resize).
+  - Panic hook para restaurar terminal ante crashes.
+  - Render de una caja con borde redondeado y título.
+  - InputEvent unificado (Key / Mouse / Resize).
+
+Sprint 2 — Layout manager y registro de widgets
+  - Grid responsivo con tamaños mínimos por celda.
+  - Posiciones iniciales definidas por TOML (no drag aún).
+  - Gestor de focus: Tab / Shift-Tab, highlight de borde activo.
+  - Manejo de Event::Resize → recálculo de layout.
+  - Placeholder visual cuando un widget no tiene espacio mínimo.
+
+Sprint 3 — API de widgets + ejemplos mínimos
+  - Trait Widget completo con todos los métodos (ver más abajo).
+  - WidgetFactory y WidgetRegistry.
+  - Widgets de ejemplo: reloj y texto estático.
+  - DataState (Loading / Fresh / Stale / Error) en header de cada widget.
+
+Sprint 4 — Networking async + RSS + cotizaciones
+  - Integrar reqwest (con rustls) + feed-rs.
+  - Widget RSS con cache TTL y backoff exponencial.
+  - Widget cotizaciones.
+  - WorkerHandle con AbortHandle para cancelación limpia al salir.
+
+Sprint 5 — Clima, temas, persistencia, mouse resize y pruebas
+  - Widget clima (OpenWeather, configurable).
+  - Sistema de temas completo: paleta global + accent por widget.
+  - Guardar/restaurar layout y prefs en TOML.
+  - Resize interactivo de widgets por teclado (y mouse drag opcional).
+  - Unit e integration tests (ver sección Tests).
+
+Sprint 6 — Pulido, packaging y documentación
+  - Tests de regresión, CI (fmt + clippy + test + audit).
+  - Pre-commit hooks.
+  - Release cross-compilado.
+  - Documentación de usuario y guía de contribución de widgets.
+
+─────────────────────────────────────────────────────────────────────────
+Diseño del ciclo de vida del widget
+─────────────────────────────────────────────────────────────────────────
+
+  1. init(config, ctx)          constructor estático async → Box<dyn Widget>
+  2. start_background(handle)   spawn de tareas periódicas (opcional)
+  3. update(msg)                recibe datos del worker o eventos internos
+  4. render(area, buf)          dibuja en el Buffer de ratatui
+  5. handle_input(ev)           devuelve WidgetAction (None si no consume)
+  6. serialize_state()          para persistencia (toml::Value)
+
+─────────────────────────────────────────────────────────────────────────
+Trait Widget y tipos esenciales (Rust)
+─────────────────────────────────────────────────────────────────────────
+
+// src/widgets/mod.rs
+
+use async_trait::async_trait;
+use ratatui::{buffer::Buffer, layout::Rect};
+use std::{future::Future, pin::Pin, time::Instant};
+use tokio::task::AbortHandle;
+
+pub type WidgetId = String;
+
+// Estado del dato que cada widget expone para que el renderer
+// muestre indicadores de frescura en el header (ej: "[!] 5m ago").
+pub enum DataState {
+    Loading,
+    Fresh { fetched_at: Instant },
+    Stale { fetched_at: Instant },
+    Error(String),
+}
+
+#[derive(Clone)]
+pub struct WidgetConfig {
+    pub id:     WidgetId,
+    pub kind:   String,
+    pub params: toml::value::Table,
+}
+
+pub struct WidgetContext {
+    pub tx_core: tokio::sync::mpsc::Sender<CoreMsg>,
+    pub theme:   Theme,
+}
+
+// WorkerHandle: wrapper sobre AbortHandle para cancelación limpia.
+pub struct WorkerHandle {
+    pub abort: AbortHandle,
+}
+
+// InputEvent unificado — incluir mouse y resize desde el inicio
+// evita refactorizaciones dolorosas en sprints posteriores.
+pub enum InputEvent {
+    Key(crossterm::event::KeyEvent),
+    Mouse(crossterm::event::MouseEvent),
+    Resize(u16, u16),
+}
+
+pub enum WidgetAction {
+    None,
+    RequestFocus,
+    OpenDetail,
+    ForceRefresh,
+    ToggleUnit,
+}
+
+// ──────────────────────────────────────────────────────────────
+// El trait principal.
+//
+// NOTA DE OBJECT SAFETY:
+//   `init` lleva `where Self: Sized` porque es un constructor
+//   estático y NO forma parte del vtable. No puede llamarse a
+//   través de `dyn Widget`. El registro usa WidgetFactory para
+//   ese propósito (ver abajo).
+// ──────────────────────────────────────────────────────────────
+#[async_trait]
+pub trait Widget: Send {
+    // Constructor — llamado por el registry, no por código genérico.
+    async fn init(
+        config: &WidgetConfig,
+        ctx:    &WidgetContext,
+    ) -> anyhow::Result<Box<dyn Widget>>
+    where
+        Self: Sized;
+
+    fn id(&self)   -> &WidgetId;
+    fn kind(&self) -> &str;
+    fn data_state(&self) -> DataState;
+    fn min_size(&self)   -> (u16, u16) { (10, 4) } // mínimo por defecto
+
+    // Spawn de tareas de background; guardar el AbortHandle en self.
+    fn start_background(&mut self, handle: WorkerHandle);
+
+    // Recibe datos del worker o mensajes del core.
+    fn update(&mut self, msg: WidgetMsg);
+
+    // Renderiza en el Buffer de ratatui.
+    // Usar `ratatui::buffer::Buffer`, NO `ratatui::widgets::Canvas`
+    // (Canvas es un widget dibujable, no un buffer de renderizado).
+    fn render(&self, area: Rect, buf: &mut Buffer);
+
+    fn handle_input(&mut self, ev: InputEvent) -> WidgetAction;
+
+    // Persistencia: usar toml::Value para consistencia con el resto
+    // de la config (evitar mezclar serde_json::Value con TOML).
+    fn serialize_state(&self) -> toml::Value;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Factory y Registry
+//
+// WidgetFactory es un puntero/closure que construye widgets por kind.
+// Desacopla la construcción del uso polimórfico y resuelve el
+// problema de object safety de `init`.
+// ──────────────────────────────────────────────────────────────
+pub type WidgetFactory = fn(
+    &WidgetConfig,
+    &WidgetContext,
+) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn Widget>>> + Send>>;
+
+pub struct WidgetRegistry {
+    factories: std::collections::HashMap<String, WidgetFactory>,
+}
+
+impl WidgetRegistry {
+    pub fn register(&mut self, kind: &str, factory: WidgetFactory) { ... }
+
+    pub async fn build(
+        &self,
+        config: &WidgetConfig,
+        ctx:    &WidgetContext,
+    ) -> anyhow::Result<Box<dyn Widget>> {
+        let factory = self.factories.get(&config.kind)
+            .ok_or_else(|| anyhow::anyhow!("unknown widget kind: {}", config.kind))?;
+        factory(config, ctx).await
+    }
+}
+
+(Adaptar según necesidades; ejemplo ilustrativo.)
+
+─────────────────────────────────────────────────────────────────────────
+Sistema de temas — inspirado en btop
+─────────────────────────────────────────────────────────────────────────
+
+btop asigna un color de borde distinto a cada box (cpu_box, mem_box,
+proc_box…). Modelar lo mismo con accents por widget:
+
+  [theme]
+  main_bg      = "#282a36"
+  main_fg      = "#f8f8f2"
+  border_focus = "#ff79c6"   # borde del widget con focus
+  data_stale   = "#ff5555"   # indicador de dato desactualizado
+  border_style = "rounded"   # "ascii" | "single" | "rounded" | "bold"
+
+  [theme.widget_accents]
+  clock     = "#bd93f9"
+  weather   = "#50fa7b"
+  rss       = "#8be9fd"
+  stocks    = "#ffb86c"
+
+Los widgets usan su accent para el borde y el título; el core aplica
+`border_focus` cuando el widget tiene el focus activo.
+
+─────────────────────────────────────────────────────────────────────────
+Gestión de dependencias y crates recomendados
+─────────────────────────────────────────────────────────────────────────
+
+  ratatui + crossterm        TUI y backend de terminal
+  tokio                      runtime async
+  reqwest (feat. rustls)     HTTP async (rustls evita dep. de OpenSSL)
+  feed-rs                    parsing RSS, Atom y JSON Feed
+  serde + toml               config y persistencia
+  tracing + tracing-subscriber   logging estructurado
+  directories                rutas de config/data según OS
+  anyhow + thiserror         manejo de errores
+  unicode-width              ancho real de chars Unicode en el buffer
+                             (necesario para alinear texto con emojis
+                             o caracteres CJK — btop lo usa en todas
+                             las columnas de texto)
+
+Feature flags: usar cfg-features para excluir widgets con dependencias
+pesadas (ej.: scraping con playwright) en builds mínimos.
+
+─────────────────────────────────────────────────────────────────────────
+Panic hook — restaurar terminal ante crashes
+─────────────────────────────────────────────────────────────────────────
+
+Incluir en main() antes de iniciar la TUI. Sin esto, un panic deja
+la terminal en modo raw con el cursor oculto.
+
+  let original_hook = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+      crossterm::terminal::disable_raw_mode().ok();
+      crossterm::execute!(
+          std::io::stdout(),
+          crossterm::terminal::LeaveAlternateScreen,
+          crossterm::cursor::Show,
+      ).ok();
+      original_hook(info);
+  }));
+
+─────────────────────────────────────────────────────────────────────────
+Políticas de actualización y cache
+─────────────────────────────────────────────────────────────────────────
+
+  - Cada widget tiene TTL configurable y modo manual/auto refresh.
+  - Workers por widget usan backoff exponencial en fallos y reportan
+    DataState al core vía mpsc.
+  - tokio::sync::watch para broadcasts de estado uno-a-muchos (resize,
+    cambio de tema); mpsc para mensajes directos widget↔core.
+  - Al salir, el core llama WorkerHandle::abort en todos los workers
+    para garantizar shutdown limpio.
+
+─────────────────────────────────────────────────────────────────────────
+Tests y calidad
+─────────────────────────────────────────────────────────────────────────
+
+  - Unit tests para parsing (RSS, JSON) con fixtures locales.
+  - Mocks HTTP con httpmock o wiremock.
+  - Integration tests para layout manager simulando distintos tamaños
+    de terminal (incluir caso de terminal más pequeña que min_size).
+  - Test de DataState: verificar que Stale se activa correctamente
+    cuando el TTL expira sin respuesta del worker.
+  - CI: cargo fmt --check, cargo clippy, cargo test, cargo-audit.
+
+─────────────────────────────────────────────────────────────────────────
+Instructivo: Cómo agregar un nuevo widget
+─────────────────────────────────────────────────────────────────────────
+
+1. Crear módulo en src/widgets/ (ej.: src/widgets/weather/)
+
+2. Implementar el trait Widget:
+   - struct State { ... } con serde::Serialize si necesita persistencia
+   - async fn init(config, ctx): leer params (API key, ubicación)
+   - fn render(area, buf): usar ratatui widgets (List, Table, Sparkline)
+     sobre ratatui::buffer::Buffer — no Canvas
+   - fn start_background(handle): spawn de tareas periódicas que envían
+     WidgetMsg al widget; guardar handle.abort en self para cancelación
+   - fn handle_input(ev): WidgetAction para r=refresh, u=toggle units, etc.
+   - fn serialize_state(): toml::Value con estado mínimo necesario
+   - fn data_state(): exponer estado actual del dato (Fresh/Stale/Error)
+   - fn min_size(): dimensiones mínimas razonables para el widget
+
+3. Registrar en WidgetRegistry:
+   - registry.register("weather", |cfg, ctx| Box::pin(WeatherWidget::init(cfg, ctx)));
+   - Actualizar schema de config (opcional: validator en startup)
+
+4. Configuración de ejemplo en config.toml:
+   [widget.weather]
+   id         = "weather-1"
+   kind       = "weather"
+   location   = "Buenos Aires,AR"
+   api_key    = "ENV:OPENWEATHER_KEY"
+   ttl_secs   = 600
+
+5. Tests:
+   - Unit test del parser de la API (fixtures JSON)
+   - Integration test con mock HTTP (httpmock)
+   - Test de min_size y comportamiento con área insuficiente
+
+6. Documentar en docs/widgets.md:
+   - Parámetros soportados, valores por defecto, ejemplos
+
+7. UI/UX:
+   - Definir atajos locales (r=refresh, u=toggle units, etc.)
+   - Definir accent de color en [theme.widget_accents]
+
+8. Opcional — scripts externos:
+   - Permitir exec_cmd = "path/to/script" en config y parsear su
+     salida como fuente de datos alternativa/fallback
+
+─────────────────────────────────────────────────────────────────────────
+Sugerencias prácticas / decisiones
+─────────────────────────────────────────────────────────────────────────
+
+  - Standardizar comunicación core↔widget con enums CoreMsg / WidgetMsg.
+  - Mantener widgets lo más stateless posible: estado en struct interno
+    re-creable desde cache/config; no persistir caches grandes.
+  - WidgetFactory + cargo-generate como plantilla para contribuciones
+    externas.
+  - Habilitar mouse desde Sprint 1:
+      crossterm::execute!(stdout, crossterm::event::EnableMouseCapture)
+    Retrofitear soporte de mouse después es costoso.
+  - Usar rustls en reqwest para evitar dependencia de OpenSSL y
+    simplificar cross-compilación.
+  - Reservar gráficos con braille characters (⣿ ⠿) o block characters
+    (▁▂▃▄▅▆▇█) como utilidad en core para widgets que los necesiten
+    (estilo btop). Implementar en Sprint 5 o 6.

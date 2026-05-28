@@ -1,0 +1,21 @@
+[package]
+name = "paneldecontrol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui     = "0.29"
+crossterm   = { version = "0.27", features = ["event-stream"] }
+tokio       = { version = "1", features = ["full"] }
+futures     = "0.3"
+anyhow      = "1"
+serde       = { version = "1", features = ["derive"] }
+toml        = "0.8"
+chrono      = { version = "0.4", features = ["clock"] }
+reqwest     = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json  = "1"
+feed-rs     = "1"
+directories = "5"
+sysinfo     = { version = "0.30", default-features = false }
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

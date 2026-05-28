@@ -1,0 +1,61 @@
+[[layout.rows]]
+height = 15
+slots = [
+    { width = 20, widget = "reloj" },
+    { width = 80, widget = "sistema" },
+]
+
+[[layout.rows]]
+height = 70
+slots = [
+    { width = 70, widget = "noticias" },
+    { width = 30, widget = "clima" },
+]
+
+[[layout.rows]]
+height = 15
+slots = [
+    { width = 50, widget = "dolar" },
+    { width = 50, widget = "btc" },
+]
+
+[widgets.reloj]
+kind = "clock"
+
+[widgets.sistema]
+kind = "sistema"
+
+[widgets.clima]
+kind     = "weather"
+location = "Buenos Aires,AR"
+api_key  = "35c42a703bf25abc96befb1a724fa0a5"
+ttl_secs = 600
+
+[widgets.noticias]
+kind      = "rss"
+url       = "https://www.infobae.com/arc/outboundfeeds/rss/"
+max_items = 12
+ttl_secs  = 300
+tts_cmd   = "ESPEAK_DATA_PATH=/home/leandro/.local/share/piper/espeak-ng-data piper --model /home/leandro/.local/share/piper/voices/es_ES-davefx-medium.onnx --output-raw | aplay -r 22050 -f S16_LE -c 1 -t raw -q"
+
+[widgets.dolar]
+kind     = "dolar"
+ttl_secs = 300
+
+[widgets.btc]
+kind     = "btc"
+ttl_secs = 60
+
+[theme]
+accent      = "#bd93f9"
+focused     = "#ff79c6"
+inactive    = "#44475a"
+border_type = "rounded"
+
+[theme.widget_accents]
+reloj    = "#8be9fd"
+sistema  = "#6272a4"
+clima    = "#50fa7b"
+noticias = "#ffb86c"
+dolar    = "#f1fa8c"
+btc      = "#ff9580"
